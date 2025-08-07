@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>WebRTC App</title>
+    <style>
+      video {
+        width: 300px;
+        margin: 10px;
+        border: 2px solid black;
+      }
+    </style>
+  </head>
+  <body>
+    <div>
+      <h3>Your id: <span id="myId"></span></h3>
+      <h3>Online users (click to connect)</h3>
+      <div id="users"></div>
+
+      <!-- 👇 Two video elements for local and remote streams -->
+      <video id="localUser" autoplay muted></video>
+      <video id="otherUser" autoplay></video>
+
+      <p id="status"></p>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+      const socket = io();
+
+      // 👇 Declare variables for media stream to avoid reloading camera multiple times
+      let localStream = null;
+      let remoteStream = null;
+
+      const peer = new RTCPeerConnection({
+        iceServers: [
+          {
+            urls: "stun:stun.l.google.com:19302", // ✅ Google's public STUN server
+          },
+        ],
+      });
+
+      // 👇 Get media stream on page load
+      const getUserMedia = async () => {
+        try {
+          localStream = await navigator.mediaDevices.getUserMedia({
+            video: true,
+            audio: true,
+          });
+
+          const localVideo = document.getElementById("localUser");
+          localVideo.srcObject = localStream;
+
+          // 👇 Add tracks to peer connection
+          for (const track of localStream.getTracks()) {
+            peer.addTrack(track, localStream);
+          }
+        } catch (error) {
+          console.error("Could not get user media", error);
+          document.getElementById("status").innerText =
+            "Error: Could not access camera/microphone.";
+        }
+      };
+
+      // 👇 Display incoming stream
+      peer.ontrack = (event) => {
+        console.log("Received remote track", event.streams[0]);
+
+        remoteStream = event.streams[0];
+
+        const remoteVideo = document.getElementById("otherUser");
+        remoteVideo.srcObject = remoteStream;
+      };
+
+      // 👇 Handle when ICE candidates are generated
+      peer.onicecandidate = (event) => {
+        if (event.candidate) {
+          socket.emit("ice-candidate", {
+            candidate: event.candidate,
+          });
+        }
+      };
+
+      // 👇 When a user clicks a button to call another
+      const createCall = async (to) => {
+        document.getElementById("status").innerText = `Calling user ${to}`;
+
+        const offer = await peer.createOffer();
+        await peer.setLocalDescription(offer);
+
+        socket.emit("outgoing:call", {
+          from: socket.id,
+          to,
+          offer,
+        });
+      };
+
+      // 👇 Receiving an incoming call
+      socket.on("incomming:call", async ({ from, offer }) => {
+        document.getElementById("status").innerText = `Incoming call...`;
+
+        await peer.setRemoteDescription(new RTCSessionDescription(offer));
+
+        const answer = await peer.createAnswer();
+        await peer.setLocalDescription(answer);
+
+        socket.emit("call:accepted", {
+          to: from,
+          answer,
+        });
+      });
+
+      // 👇 When the other user sends their answer
+      socket.on("incomming:answer", async ({ answer }) => {
+        await peer.setRemoteDescription(new RTCSessionDescription(answer));
+        document.getElementById("status").innerText = "Call connected!";
+      });
+
+      // 👇 Handle ICE candidates from remote user
+      socket.on("ice-candidate", async ({ candidate }) => {
+        try {
+          await peer.addIceCandidate(candidate);
+        } catch (e) {
+          console.error("Error adding received ice candidate", e);
+        }
+      });
+
+      // 👇 Update UI when a new user joins
+      socket.on("user:joined", (id) => {
+        console.log("user joined id", id);
+        const userDiv = document.getElementById("users");
+        const btn = document.createElement("button");
+        const textNode = document.createTextNode(id);
+
+        btn.appendChild(textNode);
+        btn.setAttribute("onclick", `createCall('${id}')`);
+        userDiv.appendChild(btn);
+      });
+
+      // 👇 Set current user ID
+      socket.on("hello", ({ id }) => {
+        document.getElementById("myId").innerText = id;
+      });
+
+      // 👇 Remove user from UI when they disconnect
+      socket.on("user:disconnected", (id) => {
+        const btn = document.getElementById(id);
+        if (btn) btn.remove();
+      });
+
+      // 👇 Load online users
+      const getAndUpdateUsers = async () => {
+        const userDiv = document.getElementById("users");
+        const res = await fetch("http://localhost:3000/users");
+        const data = await res.json();
+
+        data.forEach((element) => {
+          const btn = document.createElement("button");
+          const textNode = document.createTextNode(element[0]);
+          btn.setAttribute("onclick", `createCall('${element[0]}')`);
+          btn.appendChild(textNode);
+          userDiv.appendChild(btn);
+        });
+      };
+
+      // 👇 On load, get user media + fetch other users
+      window.addEventListener("load", async () => {
+        await getUserMedia();
+        await getAndUpdateUsers();
+      });
+    </script>
+  </body>
+</html>
