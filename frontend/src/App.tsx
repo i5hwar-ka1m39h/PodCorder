@@ -1,16 +1,25 @@
 
 import './App.css'
 import {Route, Routes} from "react-router-dom"
+import Home from './pages/home.page'
+import { SocketProvider } from './providers/Socket'
+import Room from './pages/room.page'
+import { PeerProvider } from './providers/Peer'
 
 function App() {
   
 
   return (
     <>
+    <SocketProvider>
+      <PeerProvider>
       <Routes>
-        <Route path="/" element={<h1 className='bg-red-400 text-3xl'>hellow shit</h1>}/>
-        <Route path="/twe" element={<h1>hellow twe</h1>}/>
+        <Route path="/" element={<Home/>}/>
+        <Route path="/room/:roomId" element={<Room/>}/>
       </Routes>
+      </PeerProvider>
+      </SocketProvider>
+      
     </>
   )
 }
